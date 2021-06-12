@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<link rel="shortcut icon" href="//monitor.sz.lan/public_address/static/favicon.png">
+<link rel="stylesheet" href="//monitor.sz.lan/resources/w3.css">
+<script src="//monitor.sz.lan/resources/monitor.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<html>
+<head>
+  <title>广播系统[{{username}}]</title>
+  <script>	   
+    window.onload = function() { logUserActivity('[public_address/index] load', '{{username}}'); };
+    window.onunload = function() { logUserActivity('[public_address/index] unload', '{{username}}'); };
+  </script>
+</head>
+<style>
+.fixed-footer {
+   position: fixed;
+   left: 0;
+   bottom: 0;
+   width: 100%;
+   background-color: #009688;
+   color: white;
+   text-align: center;
+}
+</style>
+<body>
+<div class="w3-container w3-padding-16 w3-responsive" style="max-width: 75em; display: block; margin-left: auto; margin-right: auto;">
+  <header class="w3-container w3-teal">
+    <div class="w3-cell-row">
+      <div class="w3-container w3-cell">
+        <h3>广播系统</h3>
+      </div>
+      <div class="w3-container w3-cell w3-cell-middle">
+        <div class="w3-right w3-dropdown-hover" style="margin-right: 1em;">
+          <button class="w3-white w3-border w3-button">时间表&nbsp;▾</button>
+          <div class="w3-dropdown-content w3-bar-block w3-card-4">
+            <a class="w3-bar-item w3-button" onclick="previewSchedule()" >预览</a>            
+            <a onclick="downloadSchedule()" class="w3-bar-item w3-button">下载</a>
+            <a class="w3-bar-item w3-button" onclick="uploadSchedule()" >上传并应用</a>
+            <form id="form-schedule-upload" method="post" enctype="multipart/form-data">
+              <input id="schedule-input" type="file" name="schedule-file" style="display: none;" />
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <table class="w3-table-all w3-hoverable" style="width:100%; table-layout:auto; user-select:none;">
+    <tr><th>时间</th><th>项目</th><th>歌名</th></tr>
+    {% for i in range(0, playback_items|length) %}
+      <tr onClick="selectSpeaker({{playback_items[i][1]}}, '{{playback_items[i][2]}}');">
+        <td>{{playback_items[i][0]}}</td>
+        <td style="white-space: nowrap;">{{playback_items[i][3]}}</td>
+        <td style="min-width: 10px">{{playback_items[i][2]}}</td>
+      </tr>
+    {% endfor %}
+  </table> 
+  <div id="msg-box" class="w3-modal">
+    <div class="w3-modal-content w3-animate-top">
+      <header class="w3-container w3-teal"> 
+        <span onclick="document.getElementById('msg-box').style.display='none'" 
+        class="w3-button w3-display-topright">&times;</span>
+        <h2>提示</h2>
+      </header>
+      <div class="w3-container">
+        <p id="msg-body"></p>
+        <p><button id="okay-button" onclick="document.getElementById('msg-box').style.display='none';" class="w3-right w3-button w3-teal">确定</button></p>
+      </div>
+    </div>
+  </div>
+  <div id="msg-box-select-devices" class="w3-modal">
+    <div class="w3-modal-content w3-animate-top">
+      <header class="w3-container w3-teal"> 
+        <span onclick="document.getElementById('msg-box-select-devices').style.display='none'" 
+        class="w3-button w3-display-topright">&times;</span>
+        <h2>选择播放设备</h2>
+      </header>
+      <div class="w3-container">
+        <div><form id="form-devices">
+        <input id="input-music-id" value="" hidden>
+        <input id="input-music-name" value="" hidden>
+        {%for i in range(0, agent_names_list|length)%} 
+          <span class="w3-tag w3-white w3-left w3-medium" style="font-family:monospace;">
+          <input id="checkbox-{{agent_names_list[i]}}" 
+                 class="w3-check"
+                 type="checkbox"
+                 value="{{agent_names_list[i]}}"
+                 onclick="document.getElementById('button-okay-select-devices').removeAttribute('disabled')">
+          <label for="checkbox-{{agent_names_list[i]}}">{{ "%-4s"| format(agent_names_list[i]) |replace(" ", "&nbsp;")|safe }}</label></span>
+        {%endfor%}
+        </form></div>
+        <footer class="w3-container"><p>
+          <button id="button-okay-select-devices" onclick="manualPlay();" class="w3-right w3-button w3-teal" disabled>
+            确定
+          </button>
+        </p></footer>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="fixed-footer">
+  <div class="w3-cell-row">
+    <div class="w3-container w3-cell">
+      <button onclick="stopPlaying();" class="w3-left w3-white w3-border w3-button" style="margin-top:0.33em;">停止播放</button>
+    </div>
+    <div class="w3-container w3-cell">
+      <p class="w3-right" >在线用户[{{username}}]，<a href="#" onclick="logout();">退出登陆</a></p>
+    </div>
+  </div>
+</div>
+</body>
+<script>
+
+
+document.getElementById('schedule-input').onchange = function() {
+
+  const XHR = new XMLHttpRequest();
+  XHR.timeout = 10000;
+  const FD = new FormData(document.getElementById('form-schedule-upload'));
+
+  document.getElementById('okay-button').style.display = 'none';
+  
+  XHR.onreadystatechange = function(e) {
+    
+    if (XHR.readyState === 4) {
+      document.getElementById('msg-box').style.display='block';
+      if (XHR.status === 200) {
+        document.getElementById('msg-body').innerHTML = '<div>' + XHR.responseText.toString() + '</div>';
+        logUserActivity('[public_address/index] upload new schedule', '{{username}}');
+      } else {
+        document.getElementById('msg-body').innerHTML = '<b>错误</b>: 时间表上传/应用失败！错误信息：<br><br>'
+        document.getElementById('msg-body').innerHTML += XHR.responseText;
+      }
+      document.getElementById('okay-button').style.display = 'block';
+    }
+  }
+  XHR.ontimeout = function () {
+    document.getElementById('msg-body').innerHTML = '<b>错误</b>: 连接超时';
+    document.getElementById('okay-button').style.display = 'block';
+  }
+    
+  XHR.open('POST', './upload_schedule/');
+  XHR.send(FD);
+  
+};
+
+function downloadSchedule() {
+  logUserActivity('[public_address/index] download existing schedule', '{{username}}');
+  window.open('./download_schedule/?dummy=' + Math.floor(Math.random() * 10000).toString());
+}
+
+function previewSchedule() {
+  logUserActivity('[public_address/index] preview existing schedule', '{{username}}');
+  window.open('./schedule/');
+}
+
+function manualPlay() {
+  document.getElementById('msg-box-select-devices').style.display='none';
+  form = document.getElementById('form-devices')
+  devices = '';
+  for (var i = 0; i < form.elements.length; i++) {
+      if (form.elements[i].type == 'checkbox') {
+        if (form.elements[i].checked == true) {
+          devices += form.elements[i].value + ',';
+        }
+      }
+  }
+  devices = devices.slice(0, -1);
+  musicName = document.getElementById('input-music-name').value
+  logUserActivity('[public_address/index] start playing ' + musicName + ' at ' + devices, '{{username}}');
+  submission('//monitor.sz.lan/public_address/play/?sound_index=' + encodeURIComponent(document.getElementById('input-music-id').value) + '&devices=' + encodeURIComponent(devices), 
+             '<span style=\'font-weight: bold;\'>' + musicName + '</span>已加入[' + devices + ']的播放队列');
+}
+
+function selectSpeaker(musicID, musicName) {
+ 
+  document.getElementById('msg-box-select-devices').style.display = 'block';
+  document.getElementById('input-music-id').value = musicID;
+  document.getElementById('input-music-name').value = musicName;
+
+}
+
+function stopPlaying() {
+  logUserActivity('[public_address/history] stop playback', '{{username}}');
+  submission('https://monitor.sz.lan/public_address/stop/', 
+             '播放已停止');
+}
+
+function uploadSchedule() {
+  document.getElementById('schedule-input').click();
+}
+
+function submission(url, msg){
+  const xhr = new XMLHttpRequest();
+  xhr.timeout = 5000;
+
+  xhr.onreadystatechange = function(e) {
+    if (xhr.readyState === 4) {
+      if (xhr.status === 200) {
+      } else {
+        msg = '指令发送错误(' + xhr.status.toString() + ')：<br>' + xhr.responseText;
+      }
+      document.getElementById('msg-box').style.display='block';
+      document.getElementById('msg-body').innerHTML= msg;
+    }
+  }
+  xhr.ontimeout = function () {
+    msg = '指令发送超时';
+  }
+  xhr.open('get', url, true)
+  xhr.send();
+}
+
+function logout() {
+  logUserActivity('[public_address/index] logout', '{{username}}');
+  window.location.replace('./logout/');
+}
+</script>
+</html>

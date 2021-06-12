@@ -1,0 +1,361 @@
+#!/usr/bin/python3
+
+from flask import Flask, render_template, Response, request
+
+import argparse
+import datetime
+import flask
+import glob
+import logging
+import json
+import os
+import pandas as pd
+import random
+import requests
+import shutil
+import signal
+import sys
+import threading
+import time
+import waitress
+
+app = Flask(__name__)
+
+sound_repository_path = '/root/bin/public-address-system/sound-repository/'
+ca_path = '/root/bin/public-address-system/mamsds-pfsense-ca.crt'
+os.environ['REQUESTS_CA_BUNDLE'] = ca_path
+log_file = '/var/log/mamsds/public-address-system.log'
+schedule_path = '/root/bin/public-address-system/schedule.csv'
+playback_history_file_path = '/root/bin/public-address-system/playback-history.csv'
+schedule_dtypes_dict={'时': int, '分': int, '类型': object, 
+                      '阳台': int, '客厅': int, '卧室': int,
+                      '备注': object}
+
+reload_schedule = True
+stop_signal = False
+debug_mode = False
+agents_list = ['https://rpi-pond.sz.lan/notification/', 
+               'https://rpi-ap-livingroom.sz.lan/notification/', 
+               'https://rpi-ap-1st-bedroom.sz.lan/notification/']
+agents_list_name_chinese = ['阳台', '客厅', '卧室', ]
+agents_list_name_english = ['rpi-pond', 
+                            'rpi-ap-livingroom',
+                            'rpi-ap-1st-bedroom']
+
+def cleanup(*args):
+
+    global stop_signal
+    stop_signal = True
+    logging.info('Stop signal received, exiting')
+    sys.exit(0)
+
+# This function should be kept exactly the same among all notification-trigger/notification-agent programs or the same sound_index
+# could result in different sound.
+def pick_a_song(sound_index):
+  #  print(sound_repository_path)
+   # print(os.path.join(sound_repository_path, 'custom/'))
+    music_path = os.path.join(sound_repository_path, 'custom-event/') + '*'
+  #  print(music_path)
+    songs_list = sorted(glob.glob(music_path), key=os.path.getsize)
+    for song in songs_list:
+        logging.debug(song)
+    if songs_list is None or sound_index >= len(songs_list):
+        return None, songs_list
+    else:
+        return songs_list[sound_index], songs_list
+
+def trigger_handler(triggers, default_retval, results):
+
+    format_agent_name = []
+    for i in range(len(triggers)):
+
+        format_agent_name.append('[{}]'.format(agents_list_name_english[i]).ljust(20))
+
+        if  triggers[i] is not None:
+            triggers[i].start()
+            logging.info('[trigger {}] started'.format(format_agent_name[i]))
+        else:
+            logging.info('[trigger {}] NOT started'.format(format_agent_name[i]))
+
+    for i in range(len(triggers)):
+        if triggers[i] is not None:
+            triggers[i].join()
+
+    http_status = 200
+    retval = ''
+    for i in range(len(triggers)):
+        if results[i] is not None:
+            if results[i][1] != 200:
+                logging.error('[non-200 response from agent [{}]] status_code:{}, response_text: {}'.format(format_agent_name[i], results[i][1], results[i][0]))
+                retval += '{}设备返回错误，代码：{}\n内容：{}\n\n'.format(agents_list_name_chinese[i], results[i][1], results[i][0])
+                http_status = 500
+            else:
+                logging.info('[response from agent {}] status_code: {}, response_text: {}, response_time: {}ms'.format(format_agent_name[i], results[i][1], results[i][0], results[i][3]))
+    if retval == '':
+        retval = default_retval
+
+    logging.info('[response to client] status_code: {}, response_text: {}'.format(http_status, retval))
+    return Response(retval, http_status)
+
+def update_playback_history(sound_index: int, sound_name: str, reason: str):
+
+    try:
+        max_history_entry = 50
+        playback_history = ''
+        if os.path.exists(playback_history_file_path):
+            with open(playback_history_file_path, 'r') as f:
+                for line in (f.readlines() [-(max_history_entry - 1):]):
+                    playback_history += line
+        # WARNING: When os.path.basename() is used on a POSIX system to get the base name from a Windows styled path (e.g. "C:\\my\\file.txt"), the entire path will be returned.
+        with open(playback_history_file_path, "w") as f:
+            playback_history += '{},{},{},{}\n'.format(datetime.datetime.now().strftime("%H:%M"), sound_index, sound_name, reason)
+            f.write(playback_history)
+    except:
+        logging.error('Failed to update playback history: {}'.format(sys.exc_info()))
+
+
+def trigger_sender(url: str, result, index: int):
+
+    logging.debug('url to request: {}'.format(url))
+
+    start = datetime.datetime.now()
+    r = requests.get(url, auth=('trigger', 'dsfs43srgsKs'))
+    response_timestamp = datetime.datetime.now()
+
+    response_time = int((response_timestamp - start).total_seconds() * 1000)
+    response_text = r.content.decode("utf-8")
+    result[index] = [response_text, r.status_code, response_timestamp, response_time]
+
+def validate_uploaded_schedule(path_to_validate):
+
+    try:
+        df = pd.read_csv(path_to_validate, dtype = schedule_dtypes_dict)
+    except Exception as e:
+        return False, f'时间表无法解析：{e}'
+        
+    if ('时' not in df.columns or '分' not in df.columns or '类型'
+        not in df.columns or '备注' not in df.columns):
+        return False, '列名称错误'
+
+    for name in agents_list_name_chinese:
+        if name not in df.columns:
+            return False, '设备名称错误'
+
+    for index, row in df.iterrows():
+        try:
+            hour = row['时']
+            minute = row['分']
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                return False, '时间错误'
+        except:
+            return False, '时间错误'
+
+        if row['类型'] != '报时' and row['类型'] != '放歌':
+            return False, '类型错误'
+
+        for name in agents_list_name_chinese:
+            if str(row[name]) != '0' and str(row[name]) != '1':
+                return False, '设备设置错误'
+
+    return True, ''
+
+@app.route('/upload_schedule/', methods=['GET', 'POST'])
+def upload_schedule():
+
+    global reload_schedule
+    logging.info('uploading new schedule')
+
+    if 'schedule-file' not in request.files:
+        return Response('没有接收到文件', 400)
+    schedule_file = request.files['schedule-file']
+    
+    if schedule_file.filename == '':
+        return Response('没有选中的文件', 400)
+            
+    filename = 'schedule.csv.tmp'
+    playback_history_dir = os.path.dirname(playback_history_file_path)
+    temp_file_path = os.path.join(playback_history_dir, filename)
+    if os.path.isfile(temp_file_path) :
+        os.remove(temp_file_path)
+    schedule_file.save(temp_file_path)
+
+    retval, message =  validate_uploaded_schedule(temp_file_path)    
+    
+    if retval == False:
+        return Response(message, 400)
+    else:
+        try:
+            shutil.copy(temp_file_path, schedule_path)
+        except Exception as e:
+            return False, f'应用时间表错误：{e}'
+        
+        reload_schedule = True
+        logging.info('New schedule uploaded and applied')
+        return Response('时间表已应用', 200)
+
+    return Response('未知内部错误', 500)
+
+
+@app.route('/download_schedule/', methods=['GET'])
+def download_schedule():
+
+    logging.info('Downloading schedule')
+    return flask.send_file(filename_or_fp=schedule_path, 
+                           as_attachment=True, 
+                           attachment_filename='schedule-{}{}.csv'.format(datetime.datetime.now().hour, datetime.datetime.now().minute))
+
+@app.route('/play/', methods=['GET'])
+def playback_history():
+
+    if 'username' in request.args:
+        username = request.args.get('username')
+    else:
+        return Response('username not specified', 400)
+
+    if 'sound_index' in request.args:
+        try:
+            sound_index = int(request.args.get('sound_index'))
+        except:
+            return Response('sound_index is not an integer', status=400)
+    else:
+        return Response('sound_index not specified', status=400)
+
+    sound_name, songs_list = pick_a_song(sound_index)
+    sound_name = os.path.basename(sound_name)
+
+    logging.info('[{}] (index = {}) manually played by {}'.format(sound_name, sound_index, username))
+
+    update_playback_history(sound_index, sound_name[:-4], '{}播放'.format(username))
+
+    triggers = [None] * len(agents_list)
+    results = [None] * len(agents_list)
+    for i in range(len(agents_list)):
+        triggers[i] = threading.Thread(target=trigger_sender, args=('{}?notification_type=custom&sound_index={}'.format(agents_list[i], sound_index), results, i))
+
+    return trigger_handler(triggers, 'PLAY command reached and acknowledged by all speaker devices', results)
+
+   # return Response(retval, status = http_status)
+
+@app.route('/stop/', methods=['GET'])
+def stop():
+
+    if 'username' in request.args:
+        username = request.args.get('username')
+    else:
+        return Response('username not specified', status=400)
+
+    logging.info('STOP commanded from {}'.format(username))
+
+    triggers = [None] * len(agents_list)
+    results = [None] * len(agents_list)
+    for i in range(len(agents_list)):
+        triggers[i] = threading.Thread(target=trigger_sender, args=('{}clear_playlist/'.format(agents_list[i]), results, i))
+
+    return trigger_handler(triggers, 'STOP command reached and acknowledged by all speaker devices', results)
+
+@app.route('/history/', methods=['GET'])
+def history():
+
+    playback_items = []
+
+    if 'username' in request.args:
+        username = request.args.get('username')
+    else:
+        return Response('username not specified', status=400)
+
+    playback_items = []
+    with open(playback_history_file_path, 'r') as f:
+        for line in (f.readlines()):
+                playback_items.insert(0, line.replace('\n', '').split(','))
+
+    return render_template("index.html", playback_items=playback_items, username=username)
+
+def main_loop():
+
+    global stop_signal, reload_schedule
+
+    random.seed()
+
+    while stop_signal == False:
+        if reload_schedule:
+            df = pd.read_csv(schedule_path, dtype = schedule_dtypes_dict)
+            reload_schedule = True
+            logging.debug('Schedule reloaded')
+            
+        triggers = []
+        matched = False
+        logging.debug('Loop started')
+        for index, row in df.iterrows():
+            if row['时'] == datetime.datetime.now().hour and row['分'] ==  datetime.datetime.now().minute:
+                matched = True
+                logging.info('\n{}\nmatched, schedule trigger started'.format(row))
+                _, songs_list = pick_a_song(0)
+                songs_count = len(songs_list)
+                sound_index = random.randint(0, songs_count - 1)
+
+                if row['类型'] == '放歌':
+                    sound_name = os.path.basename(songs_list[sound_index])
+                    logging.info('[{}] (index = {}) is selected'.format(sound_name, sound_index))
+
+                    update_playback_history(sound_index, sound_name[:-4], row['备注'])
+
+                triggers = [None] * len(agents_list)
+                results = [None] * len(agents_list)
+                for i in range(len(agents_list_name_chinese)):
+                    if str(row[agents_list_name_chinese[i]]) == '1':
+                        if row['类型'] == '报时':
+                            triggers[i] = threading.Thread(target=trigger_sender, args=('{}?notification_type=chiming'.format(agents_list[i]), results, i))
+                        elif row['类型'] == '放歌':
+                            triggers[i] = threading.Thread(target=trigger_sender, args=('{}?notification_type=custom&sound_index={}'.format(agents_list[i], sound_index), results, i))
+
+                trigger_handler(triggers, 'PLAY command reached and acknowledged by all speaker devices', results)
+            else:
+                logging.debug('Time does not match, waiting for next loop.')
+
+        if matched == True:
+            for i in range(60):
+                if stop_signal == False:
+                    time.sleep(1)
+        else:
+            for i in range(30 if debug_mode else 50):
+                if stop_signal == False:
+                    time.sleep(1)
+
+    return
+
+def main():
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--debug', dest='debug', action='store_true')
+    args = vars(ap.parse_args())
+    debug_mode = args['debug']
+
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.DEBUG if debug_mode else logging.INFO,
+        format='%(asctime)s %(levelname)06s - %(funcName)s: %(message)s',
+        datefmt='%Y%m%d-%H%M%S',
+    )
+
+    if debug_mode == True:
+        print('Running in debug mode')
+        logging.debug('Running in debug mode')
+    else:
+        logging.info('Running in production mode')
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+    logging.info('public-address-system started')
+
+    main_loop_thread = threading.Thread(target=main_loop, args=())
+    main_loop_thread.start()
+    waitress.serve(app, host="127.0.0.1", port=91)
+
+    logging.info('public-address-system exited')
+
+
+if __name__ == '__main__':
+
+
+    main()
+

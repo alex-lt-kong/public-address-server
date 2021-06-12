@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<link rel="shortcut icon" href="../static/favicon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="//monitor.sz.lan/resources/w3.css">
+<link rel="stylesheet" href="//monitor.sz.lan/resources/w3-colors-highway.css">
+<script src="//monitor.sz.lan/resources/monitor.js"></script>
+
+<html>
+<title>广播系统 - 登陆</title>
+
+<body>
+<div class="w3-container w3-padding-16" style="max-width: 30em; margin-top:20vh; display: block; margin-left: auto; margin-right: auto;">
+  <div class="w3-card-4">
+  <div class="w3-container w3-teal">
+    <h4>广播系统 - 登陆</h4>
+  </div>
+  <form class="w3-container" action="../login/" method="post">
+    <p>
+      <label class="w3-text-teal"><b>用户名</b></label>
+      <input class="w3-input w3-border w3-light-grey" type="text" name="username" >
+    </p>
+    <p>
+      <label class="w3-text-teal"><b>密码</b></label>    
+      <input class="w3-input w3-border w3-light-grey" type="password" name="password" >
+    </p>
+    <div class="w3-cell-row" style="margin-bottom:1em;">
+      <div class="w3-container w3-cell w3-mobile" style="padding:0px;">
+        <span style="color:red">{{error_message|safe}}</span>
+      </div>
+      <div class="w3-container w3-cell w3-mobile" style="padding:0px;">
+        <button class="w3-button w3-border w3-highway-green w3-right" style="" type="submit" >登陆</button>
+      </div>    
+    </div>
+
+
+  </form></div>
+</div>
+</body>
+</html> 

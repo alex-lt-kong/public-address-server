@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<link rel="shortcut icon" href="//monitor.sz.lan/public_address/static/favicon.png">
+<link rel="stylesheet" href="//monitor.sz.lan/resources/w3.css">
+<script src="//monitor.sz.lan/resources/monitor.js"></script>
+<script src="//monitor.sz.lan/resources/jquery-3.5.1.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<html>
+<head>
+  <title>广播系统[{{username}}]</title>
+  <script>	   
+    window.onload = function() { logUserActivity('[public_address/schedule] load', '{{username}}'); };
+    window.onunload = function() { logUserActivity('[public_address/schedule] unload', '{{username}}'); };
+  </script>
+</head>
+<style>
+#header-fixed {
+    position: fixed;
+    top: 0px; display:none;
+    background-color:white;
+}
+</style>
+<body>
+<div class="w3-container w3-padding-16 w3-responsive" style="max-width: 75em; display: block; margin-left: auto; margin-right: auto;">
+  <table id="table-schedule" class="w3-table-all w3-hoverable" style="width:100%; table-layout:auto; user-select:none;">
+    <thead><tr><th>时</th><th>分</th><th>类型</th><th>阳台</th><th>客厅</th><th>卧室</th><th>备注</th></tr></thead>
+    <tbody>
+    {% for i in range(0, schedule_items|length) %}
+      <tr>
+        <td>{{schedule_items[i][0]}}</td>
+        <td>{{schedule_items[i][1]}}</td>
+        <td>{{schedule_items[i][2]}}</td>
+        <td>{{schedule_items[i][3]}}</td>
+        <td>{{schedule_items[i][4]}}</td>
+        <td>{{schedule_items[i][5]}}</td>
+        <td>{{schedule_items[i][6]}}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+</body>
+<script>
+$(function() {
+  $("table-schedule").stickyTableHeaders();
+});
+
+</script>
+</html>
