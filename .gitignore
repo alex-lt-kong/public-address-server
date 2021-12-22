@@ -2,7 +2,6 @@ settings.json
 users.json
 playback-history.csv
 *.crt
-sound-repository/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
