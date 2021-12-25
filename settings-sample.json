@@ -1,0 +1,26 @@
+{
+    "app": {
+        "address": "https://localhost/public-address",
+        "log_path": "/var/log/public-address-server.log",
+        "ca_path": "/tmp/ca.crt"
+    },
+    "email": {
+        "from_address": "test@example.net",
+        "from_password": "a-long-password",
+        "from_name": "test",
+        "to_address": "admin@example.net",
+        "to_name": "Admin Account",
+        "path": "/tmp/emailer.py"
+    },
+    "flask" :{
+        "max_upload_size": 128000000,
+        "secret_key": "a-long-secret-key",
+        "port": 81
+    },
+    "devices" :{
+        "urls": ["https://device1.lan/notification/",
+                "https://device2.lan/notification/",
+                "https://device3.lan/notification/"],
+        "names": ["设备1", "设备2", "设备3"]
+    }
+}

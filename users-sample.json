@@ -1,0 +1,5 @@
+{
+    "users": {
+        "admin": "sha256-of-password"
+    }
+}

@@ -8,6 +8,7 @@ import datetime as dt
 import flask
 import glob
 import hashlib
+import importlib
 import logging
 import json
 import os
@@ -21,11 +22,6 @@ import threading
 import time
 import waitress
 
-import importlib.machinery
-loader = importlib.machinery.SourceFileLoader('emailer',
-                                              '/root/bin/emailer/emailer.py')
-emailer = loader.load_module()
-
 app = Flask(__name__)
 app.secret_key = b''
 app.config.update(
@@ -35,15 +31,15 @@ app.config.update(
 )
 
 app_address = ''
-app_name = 'public-address'
-settings_path = f'/root/bin/{app_name}/settings.json'
-sound_repository_path = f'/root/bin/{app_name}/sound-repository/'
-ca_path = f'/root/bin/{app_name}/mamsds-pfsense-ca.crt'
-os.environ['REQUESTS_CA_BUNDLE'] = ca_path
-log_path = f'/var/log/mamsds/{app_name}.log'
-schedule_path = f'/root/bin/{app_name}/schedule.csv'
-users_path = f'/root/bin/{app_name}/users.json'
-playback_history_file_path = f'/root/bin/{app_name}/playback-history.csv'
+app_name = 'public-address-server'
+# app_dir: the app's real address on the filesystem
+app_dir = os.path.dirname(os.path.realpath(__file__))
+settings_path = os.path.join(app_dir, 'settings.json')
+sound_repository_path = os.path.join(app_dir, 'sound-repository')
+schedule_path = os.path.join(app_dir, 'schedule.csv')
+settings = None
+users_path = os.path.join(app_dir, 'users.json')
+playback_history_file_path = os.path.join(app_dir, 'playback-history.csv')
 schedule_dtypes_dict = {'时': int, '分': int, '类型': object,
                         '阳台': int, '客厅': int, '卧室': int,
                         '备注': object}
@@ -534,6 +530,20 @@ def main():
     args = vars(ap.parse_args())
     debug_mode = args['debug']
 
+    global settings
+    global app_address, agents_url_list, agent_names_list
+    with open(os.path.join(app_dir, 'settings.json'), 'r') as json_file:
+        json_str = json_file.read()
+        settings = json.loads(json_str)
+
+    app.secret_key = settings['flask']['secret_key']
+    app.config['MAX_CONTENT_LENGTH'] = settings['flask']['max_upload_size']
+    app_address = settings['app']['address']
+    agents_url_list = settings['devices']['urls']
+    agent_names_list = settings['devices']['names']
+    log_path = settings['app']['log_path']
+    os.environ['REQUESTS_CA_BUNDLE'] = settings['app']['ca_path']
+
     logging.basicConfig(
         filename=log_path,
         level=logging.DEBUG if debug_mode else logging.INFO,
@@ -543,7 +553,9 @@ def main():
 
     if debug_mode is True:
         print('Running in debug mode')
+        print(settings)
         logging.debug('Running in debug mode')
+
     else:
         logging.info('Running in production mode')
 
@@ -553,7 +565,9 @@ def main():
 
     main_loop_thread = threading.Thread(target=main_loop, args=())
     main_loop_thread.start()
-
+    emailer = importlib.machinery.SourceFileLoader(
+                        'emailer',
+                        settings['email']['path']).load_module()
     th_email = threading.Thread(target=emailer.send_service_start_notification,
                                 kwargs={'settings_path': settings_path,
                                         'service_name': f'{app_name}',
@@ -561,27 +575,7 @@ def main():
                                         'delay': 0 if debug_mode else 300})
     th_email.start()
 
-    port = -1
-
-    global app_address, agents_url_list, agent_names_list
-
-    try:
-        with open(settings_path, 'r') as json_file:
-            json_str = json_file.read()
-            data = json.loads(json_str)
-        app.secret_key = data['flask']['secret_key']
-        app.config['MAX_CONTENT_LENGTH'] = data['flask']['max_upload_size']
-        app_address = data['app']['address']
-        agents_url_list = data['devices']['urls']
-        agent_names_list = data['devices']['names']
-        port = data['flask']['port']
-        logging.debug(f'data: {data}')
-    except Exception as e:
-        data = None
-        logging.error(f'data error: {e}')
-        return
-
-    waitress.serve(app, host="127.0.0.1", port=port)
+    waitress.serve(app, host="127.0.0.1", port=settings['flask']['port'])
 
     logging.info(f'{app_name} exited')
 
