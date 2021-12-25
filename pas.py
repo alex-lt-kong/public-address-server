@@ -31,6 +31,7 @@ app.config.update(
 )
 
 app_address = ''
+app.config['JSON_AS_ASCII'] = False
 app_name = 'public-address-server'
 # app_dir: the app's real address on the filesystem
 app_dir = os.path.dirname(os.path.realpath(__file__))
@@ -145,7 +146,9 @@ def trigger_sender(url: str, results, index: int):
     logging.debug(f'url to request: {url}')
 
     start = dt.datetime.now()
-    r = requests.get(url, auth=('trigger', 'dsfs43srgsKs'))
+    r = requests.get(
+        url, 
+        auth=(settings['devices']['username'], settings['devices']['password']))
     response_timestamp = dt.datetime.now()
 
     response_time = int((response_timestamp - start).total_seconds() * 1000)
@@ -341,6 +344,30 @@ def play():
             results=results)
 
 
+@app.route('/client-health-check/', methods=['GET'])
+def client_health_check():
+
+    if f'{app_name}' in session and 'username' in session[f'{app_name}']:
+        username = session[f'{app_name}']['username']
+    else:
+        return Response('未登录', status=400)
+    results = {}
+
+    for i in range(len(agents_url_list)):
+        
+        r = requests.get(
+            f'{agents_url_list[i]}health_check/', 
+            auth=(settings['devices']['username'], settings['devices']['password'])
+        )
+        results[agent_names_list[i]] = {}
+        if r.status_code == 200:
+            results[agent_names_list[i]]['status'] = '正常'
+        else:
+            results[agent_names_list[i]]['content'] = r.content.decode("utf-8")
+            results[agent_names_list[i]]['status_code'] = r.status_code
+
+    return results
+
 @app.route('/stop/', methods=['GET'])
 def stop():
 
@@ -396,11 +423,15 @@ def index():
     with open(playback_history_file_path, 'r') as f:
         for line in (f.readlines()):
             playback_items.insert(0, line.replace('\n', '').split(','))
+    kwargs = {
+        'app_address': app_address,
+        'playback_items': playback_items,
+        'mode': 'dev' if debug_mode else 'prod',
+        'agent_names_list': agent_names_list,
+        'username': username
+    }
 
-    return render_template("index.html",
-                           playback_items=playback_items,
-                           agent_names_list=agent_names_list,
-                           username=username)
+    return render_template("index.html", **kwargs)
 
 
 @app.route('/logout/')
@@ -482,9 +513,7 @@ def main_loop():
                 logging.info(f'[{sound_name}] (index = {sound_index}) '
                              'is selected')
 
-                update_playback_history(sound_index,
-                                        sound_name[:-4],
-                                        row['备注'])
+                update_playback_history(sound_index, sound_name[:-4], row['备注'])
 
             triggers = []
             results = [None] * len(agents_url_list)
@@ -528,6 +557,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--debug', dest='debug', action='store_true')
     args = vars(ap.parse_args())
+    global debug_mode
     debug_mode = args['debug']
 
     global settings
