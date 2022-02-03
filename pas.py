@@ -275,7 +275,7 @@ def download_music():
     if 'filename' not in request.args:
         return Response('参数filename未指定', status=400)
 
-    filename = sanitize_filename(request.args['filename'])
+    filename = request.args['filename']
 
     if os.path.isfile(os.path.join(sound_repository_path,
                                    'custom-event/', filename)):
@@ -601,7 +601,7 @@ def main():
     th_email = threading.Thread(target=emailer.send_service_start_notification,
                                 kwargs={'settings_path': settings_path,
                                         'service_name': f'{app_name}',
-                                        'log_path': log_path,
+                                        'path_of_logs_to_send': log_path,
                                         'delay': 0 if debug_mode else 300})
     th_email.start()
 
