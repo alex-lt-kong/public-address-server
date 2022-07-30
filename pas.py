@@ -1,6 +1,6 @@
 #!/usr/bin/python3
-# -*- coding: utf-8 -*-
 
+from emailer import emailer
 from flask import Flask, render_template, redirect, Response, request, session
 
 import argparse
@@ -8,7 +8,6 @@ import datetime as dt
 import flask
 import glob
 import hashlib
-import importlib
 import logging
 import json
 import os
@@ -20,6 +19,7 @@ import signal
 import sys
 import threading
 import time
+import typing
 import waitress
 
 app = Flask(__name__)
@@ -38,7 +38,7 @@ app_dir = os.path.dirname(os.path.realpath(__file__))
 settings_path = os.path.join(app_dir, 'settings.json')
 sound_repository_path = os.path.join(app_dir, 'sound-repository')
 schedule_path = os.path.join(app_dir, 'schedule.csv')
-settings = None
+settings: typing.Dict[str, typing.Any]
 users_path = os.path.join(app_dir, 'users.json')
 playback_history_file_path = os.path.join(app_dir, 'playback-history.csv')
 schedule_dtypes_dict = {'时': int, '分': int, '类型': object,
@@ -48,7 +48,8 @@ schedule_dtypes_dict = {'时': int, '分': int, '类型': object,
 reload_schedule = True
 stop_signal = False
 debug_mode = False
-agents_url_list, agent_names_list = [], []
+client_urls_list: typing.List[str] = []
+client_names_list: typing.List[str] = []
 
 
 def stop_signal_handler(*args):
@@ -74,7 +75,7 @@ def get_song_by_id(sound_index: int):
         return songs_list[sound_index], songs_list
 
 
-def trigger_handler(triggers, device_names, default_response, results):
+def trigger_handler(triggers, device_names, default_response, results) -> flask.Response:
 
     format_agent_name = []
     assert len(triggers) == len(device_names)
@@ -106,10 +107,10 @@ def trigger_handler(triggers, device_names, default_response, results):
                     f'，错误描述：{results[i][0]}\n')
                 http_status = 500
             else:
-                logging.info(f'[response from device {format_agent_name[i]}] '
-                             f'status_code: {results[i][1]}, '
-                             f'response_text: {results[i][0]}, '
-                             f'response_time: {results[i][3]}ms')
+                logging.info(f'response from device {format_agent_name[i]}: '
+                             f'status_code=={results[i][1]}, '
+                             f'response_text=={results[i][0]}, '
+                             f'response_time=={results[i][3]}ms')
     if response == '':
         response = default_response
 
@@ -118,10 +119,10 @@ def trigger_handler(triggers, device_names, default_response, results):
     return Response(response.replace('\n', '<br>'), http_status)
 
 
-def update_playback_history(sound_index: int, sound_name: str, reason: str):
+def update_playback_history(sound_index: int, sound_name: str, reason: str) -> None:
 
     try:
-        max_history_entry = 100
+        max_history_entry = 128
         playback_history = ''
         if os.path.exists(playback_history_file_path):
             with open(playback_history_file_path, 'r') as f:
@@ -141,60 +142,76 @@ def update_playback_history(sound_index: int, sound_name: str, reason: str):
         logging.error(f'Failed to update playback history: {e}')
 
 
-def trigger_sender(url: str, results, index: int):
+def call_remote_client(url: str, results: typing.List[object], index: int) -> None:
 
     logging.debug(f'url to request: {url}')
 
-    start = dt.datetime.now()
-    r = requests.get(
-        url, 
-        auth=(settings['devices']['username'], settings['devices']['password']))
-    response_timestamp = dt.datetime.now()
-
-    response_time = int((response_timestamp - start).total_seconds() * 1000)
-    response_text = r.content.decode("utf-8")
-    results[index] = [response_text,
-                      r.status_code,
-                      response_timestamp,
-                      response_time]
+    try:
+        start = dt.datetime.now()
+        r = requests.get(url, auth=(settings['devices']['username'], settings['devices']['password']), timeout=5)
+        response_timestamp = dt.datetime.now()
+        response_time = int((response_timestamp - start).total_seconds() * 1000)
+        response_text = r.content.decode("utf-8")
+        results[index] = [response_text, r.status_code, response_timestamp, response_time]
+    except Exception as ex:
+        results[index] = [str(ex), -1, dt.datetime.now(), 0]
 
 
-def validate_uploaded_schedule(path_to_validate):
+def validate_uploaded_schedule(path_to_validate: str) -> typing.Tuple[bool, str]:
 
     try:
         df = pd.read_csv(path_to_validate, dtype=schedule_dtypes_dict)
     except Exception as e:
         return False, f'时间表无法解析：{e}'
 
-    if ('时' not in df.columns or '分' not in df.columns or '类型'
-            not in df.columns or '备注' not in df.columns):
-        return False, '列名称错误'
+    if '时' != df.columns[0] or '分' != df.columns[1] or '类型' != df.columns[2] or '备注' != df.columns[3]:
+        return False, '列名称错误：前四列应依次为[时，分，类型，备注]'
 
-    for name in agent_names_list:
+    for name in client_names_list:
         if name not in df.columns:
-            return False, '设备名称错误'
+            return False, f'时间表没有定义设备[{name}]的计划'
+        invalid_rows = df.loc[~df[name].isin([0, 1])]
+        if invalid_rows.shape[0] == 0:
+            continue
+        return (
+            False,
+            f'设备[{name}]的计划的值只能是[0,1]，这些行违反了这个规则：\n\n{invalid_rows.to_string(header=False, index=False)}'
+        )
 
-    for index, row in df.iterrows():
-        try:
-            hour = row['时']
-            minute = row['分']
-            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-                return False, '时间错误'
-        except Exception as e:
-            return False, f'时间错误：{e}'
+    if len(df.columns) != len(client_names_list) + 4:
+        return False, '时间表存在额外的列'
 
-        if row['类型'] != '报时' and row['类型'] != '放歌':
-            return False, '类型错误'
+    invalid_rows = df.loc[~((df['分'] >= 0) & (df['分'] <= 59))]
+    if invalid_rows.shape[0] > 0:
+        return (
+            False,
+            f'数据列"分"的合法范围是0-59，这些行违反了这个规则：\n\n{invalid_rows.to_string(header=False, index=False)}'
+        )
+    invalid_rows = df.loc[~((df['时'] >= 0) & (df['时'] <= 23))]
+    if invalid_rows.shape[0] > 0:
+        return (
+            False,
+            f'数据列"时"的合法范围是0-23，这些行违反了这个规则：\n\n{invalid_rows.to_string(header=False, index=False)}'
+        )
 
-        for name in agent_names_list:
-            if str(row[name]) != '0' and str(row[name]) != '1':
-                return False, '设备设置错误'
+    invalid_rows = df.loc[~df['类型'].isin(['报时', '放歌'])]
+    if invalid_rows.shape[0] > 0:
+        return (
+            False,
+            f'数据列"类型"的值只能是[报时,放歌]，这些行违反了这个规则：\n\n{invalid_rows.to_string(header=False, index=False)}'
+        )
+    invalid_rows = df.loc[~df['类型'].isin(['报时', '放歌'])]
+    if invalid_rows.shape[0] > 0:
+        return (
+            False,
+            f'数据列"类型"的值只能是[报时,放歌]，这些行违反了这个规则：\n\n{invalid_rows.to_string(header=False, index=False)}'
+        )
 
     return True, ''
 
 
 @app.route('/upload_schedule/', methods=['GET', 'POST'])
-def upload_schedule():
+def upload_schedule() -> flask.Response:
 
     if f'{app_name}' in session and 'username' in session[f'{app_name}']:
         pass
@@ -221,22 +238,20 @@ def upload_schedule():
     retval, message = validate_uploaded_schedule(temp_file_path)
 
     if retval is False:
-        return Response(message, 400)
-    else:
-        try:
-            shutil.copy(temp_file_path, schedule_path)
-        except Exception as e:
-            return False, f'应用时间表错误：{e}'
+        return Response(message.replace('\n', '<br>'), 400)
 
-        reload_schedule = True
-        logging.info('New schedule uploaded and applied')
-        return Response('时间表已应用', 200)
+    try:
+        shutil.copy(temp_file_path, schedule_path)
+    except Exception as e:
+        return Response(f'应用时间表错误：无法覆盖现有时间表文件', 500)
 
-    return Response('未知内部错误', 500)
+    reload_schedule = True
+    logging.info('New schedule uploaded and applied')
+    return Response('时间表已应用', 200)
 
 
 @app.route('/download_schedule/', methods=['GET'])
-def download_schedule():
+def download_schedule() -> flask.Response:
 
     if f'{app_name}' in session and 'username' in session[f'{app_name}']:
         pass
@@ -244,15 +259,15 @@ def download_schedule():
         return Response('未登录', status=400)
 
     logging.info('Downloading schedule')
-    return flask.send_file(filename_or_fp=schedule_path,
-                           as_attachment=True,
-                           attachment_filename='schedule-{}{}.csv'
-                           .format(dt.datetime.now().hour,
-                                   dt.datetime.now().minute))
+    return flask.send_file(
+        filename_or_fp=schedule_path,
+        as_attachment=True,
+        attachment_filename=f'schedule-{dt.datetime.now().hour:02}{dt.datetime.now().minute:02}.csv'
+    )
 
 
-def sanitize_filename(filename):
-    # This function may be not robust enough... but should be good enough
+def sanitize_filename(filename: str) -> str:
+    # This function may be not robust... but should be good enough
     # for this use case...
     # also, the security is enhanced by the use of send_from_directory()
     error_set = ['/', '\\', ':', '*', '?', '"', '|', '<', '>', ' ']
@@ -311,8 +326,8 @@ def play():
         return Response('没有选中的播放设备', status=400)
 
     for device in devices:
-        if device not in agent_names_list:
-            return Response(f'[{device}]不在可用设备列表{agent_names_list}中',
+        if device not in client_names_list:
+            return Response(f'[{device}]不在可用设备列表{client_names_list}中',
                             status=400)
 
     sound_name, songs_list = get_song_by_id(sound_index)
@@ -330,11 +345,11 @@ def play():
     triggers, results = [], []
 
     for i in range(len(devices)):
-        index = agent_names_list.index(devices[i])
+        index = client_names_list.index(devices[i])
         results.append(None)
-        device_url = (f'{agents_url_list[index]}?notification_type=custom&'
-                      f'sound_index={sound_index}')
-        triggers.append(threading.Thread(target=trigger_sender,
+        device_url = (f'{client_urls_list[index]}?notification_type=custom&'
+                      f'sound_index={sound_index}&sound_name={sound_name}')
+        triggers.append(threading.Thread(target=call_remote_client,
                                          args=(device_url, results, i)))
 
     return trigger_handler(
@@ -345,81 +360,46 @@ def play():
 
 
 @app.route('/client-health-check/', methods=['GET'])
-def client_health_check():
+def client_health_check() -> typing.Union[typing.Dict[str, str], flask.Response]:
 
     if f'{app_name}' in session and 'username' in session[f'{app_name}']:
-        username = session[f'{app_name}']['username']
+        # username = session[f'{app_name}']['username']
+        pass
     else:
         return Response('未登录', status=400)
-    results = {}
+    results: typing.Dict[str, typing.Any] = {}
 
-    for i in range(len(agents_url_list)):
-        
-        r = requests.get(
-            f'{agents_url_list[i]}health_check/', 
-            auth=(settings['devices']['username'], settings['devices']['password'])
-        )
-        results[agent_names_list[i]] = {}
-        if r.status_code == 200:
-            results[agent_names_list[i]]['status'] = '正常'
-        else:
-            results[agent_names_list[i]]['content'] = r.content.decode("utf-8")
-            results[agent_names_list[i]]['status_code'] = r.status_code
+    for i in range(len(client_urls_list)):
+        results[client_names_list[i]] = {}
+        try:
+            r = requests.get(
+                f'{client_urls_list[i]}health_check/',
+                auth=(settings['devices']['username'], settings['devices']['password']),
+                timeout=5
+            )
+            if r.status_code == 200:
+                results[client_names_list[i]]['status'] = '正常'
+            else:
+                results[client_names_list[i]]['status'] = '错误'
+                results[client_names_list[i]]['content'] = r.content.decode("utf-8")
+                results[client_names_list[i]]['status_code'] = r.status_code
+        except Exception as e:
+            results[client_names_list[i]]['status'] = '错误'
+            results[client_names_list[i]]['content'] = str(e)
+            results[client_names_list[i]]['status_code'] = -1
 
     return results
 
-@app.route('/stop/', methods=['GET'])
-def stop():
-
-    if f'{app_name}' in session and 'username' in session[f'{app_name}']:
-        username = session[f'{app_name}']['username']
-    else:
-        return Response('未登录', status=400)
-
-    logging.info('STOP commanded from {}'.format(username))
-
-    triggers = [None] * len(agents_url_list)
-    results = [None] * len(agents_url_list)
-    for i in range(len(agents_url_list)):
-        triggers[i] = threading.Thread(
-                target=trigger_sender,
-                args=(f'{agents_url_list[i]}clear_playlist/', results, i))
-
-    return trigger_handler(
-            triggers=triggers,
-            device_names=agent_names_list,
-            default_response=f'STOP command accepted by {agent_names_list}',
-            results=results)
-
-
-@app.route('/schedule/', methods=['GET'])
-def schedule():
-
-    if f'{app_name}' in session and 'username' in session[f'{app_name}']:
-        username = session[f'{app_name}']['username']
-    else:
-        return redirect(f'{app_address}/login/')
-
-    df = pd.read_csv(schedule_path, dtype=schedule_dtypes_dict)
-    schedule_items = []
-    for index, row in df.iterrows():
-        schedule_items.append([row['时'],   row['分'],
-                               row['类型'], row['阳台'],
-                               row['客厅'], row['卧室'], row['备注']])
-    return render_template("schedule.html",
-                           schedule_items=schedule_items,
-                           username=username)
-
 
 @app.route('/', methods=['GET'])
-def index():
+def index() -> flask.Response:
 
     if f'{app_name}' in session and 'username' in session[f'{app_name}']:
         username = session[f'{app_name}']['username']
     else:
         return redirect(f'{app_address}/login/')
 
-    playback_items = []
+    playback_items: typing.List[str] = []
     with open(playback_history_file_path, 'r') as f:
         for line in (f.readlines()):
             playback_items.insert(0, line.replace('\n', '').split(','))
@@ -427,7 +407,7 @@ def index():
         'app_address': app_address,
         'playback_items': playback_items,
         'mode': 'dev' if debug_mode else 'prod',
-        'agent_names_list': agent_names_list,
+        'agent_names_list': client_names_list,
         'username': username
     }
 
@@ -435,7 +415,7 @@ def index():
 
 
 @app.route('/logout/')
-def logout():
+def logout() -> flask.Response:
 
     if f'{app_name}' in session:
         session[f'{app_name}'].pop('username', None)
@@ -443,13 +423,13 @@ def logout():
 
 
 @app.before_request
-def make_session_permanent():
+def make_session_permanent() -> None:
     session.permanent = True
     app.permanent_session_lifetime = dt.timedelta(days=90)
 
 
 @app.route('/login/', methods=['GET', 'POST'])
-def login():
+def login() -> flask.Response:
 
     if f'{app_name}' in session and 'username' in session[f'{app_name}']:
         return redirect(f'{app_address}/')
@@ -482,7 +462,7 @@ def login():
     return redirect(f'{app_address}/')
 
 
-def main_loop():
+def main_loop() -> None:
 
     global stop_signal, reload_schedule
 
@@ -516,21 +496,22 @@ def main_loop():
                 update_playback_history(sound_index, sound_name[:-4], row['备注'])
 
             triggers = []
-            results = [None] * len(agents_url_list)
+            results = [None] * len(client_urls_list)
             devices = []
-            for i in range(len(agent_names_list)):
-                if str(row[agent_names_list[i]]) != '1':
+            for i in range(len(client_names_list)):
+                if str(row[client_names_list[i]]) != '1':
                     continue
-                devices.append(agent_names_list[i])
+                devices.append(client_names_list[i])
                 if row['类型'] == '报时':
-                    device_url = (f'{agents_url_list[i]}?notification_type='
-                                  'chiming')
+                    device_url = (f'{client_urls_list[i]}?notification_type='
+                                  'chiming&sound_name=0-cuckoo-clock-sound.mp3')
                 elif row['类型'] == '放歌':
-                    device_url = (f'{agents_url_list[i]}?notification_type'
-                                  f'=custom&sound_index={sound_index}')
+                    device_url = (f'{client_urls_list[i]}?notification_type'
+                                  f'=custom&sound_index={sound_index}&'
+                                  f'sound_name={os.path.basename(songs_list[sound_index])}')
                 else:
                     logging.error(f'Encountered unexpected type {row["类型"]}')
-                trigger = threading.Thread(target=trigger_sender,
+                trigger = threading.Thread(target=call_remote_client,
                                            args=(device_url, results, i))
                 triggers.append(trigger)
 
@@ -552,7 +533,7 @@ def main_loop():
     return
 
 
-def main():
+def main() -> None:
 
     ap = argparse.ArgumentParser()
     ap.add_argument('--debug', dest='debug', action='store_true')
@@ -561,7 +542,7 @@ def main():
     debug_mode = args['debug']
 
     global settings
-    global app_address, agents_url_list, agent_names_list
+    global app_address, client_urls_list, client_names_list
     with open(os.path.join(app_dir, 'settings.json'), 'r') as json_file:
         json_str = json_file.read()
         settings = json.loads(json_str)
@@ -569,8 +550,8 @@ def main():
     app.secret_key = settings['flask']['secret_key']
     app.config['MAX_CONTENT_LENGTH'] = settings['flask']['max_upload_size']
     app_address = settings['app']['address']
-    agents_url_list = settings['devices']['urls']
-    agent_names_list = settings['devices']['names']
+    client_urls_list = settings['devices']['urls']
+    client_names_list = settings['devices']['names']
     log_path = settings['app']['log_path']
     os.environ['REQUESTS_CA_BUNDLE'] = settings['app']['ca_path']
 
@@ -595,9 +576,6 @@ def main():
 
     main_loop_thread = threading.Thread(target=main_loop, args=())
     main_loop_thread.start()
-    emailer = importlib.machinery.SourceFileLoader(
-                        'emailer',
-                        settings['email']['path']).load_module()
     th_email = threading.Thread(target=emailer.send_service_start_notification,
                                 kwargs={'settings_path': settings_path,
                                         'service_name': f'{app_name}',

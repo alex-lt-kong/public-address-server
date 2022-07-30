@@ -2,17 +2,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="shortcut icon" href="{{app_address}}/static/favicon.png">
 <link rel="stylesheet" href="//monitor.sz.lan/resources/w3.css">
-<script src="//monitor.sz.lan/resources/monitor.js"></script>
 <script src="{{app_address}}/static/lib/jquery/3.6.0/jquery.{{mode}}.js"></script>
 
 
 <html>
 <head>
   <title>广播系统[{{username}}]</title>
-  <script>	   
-    window.onload = function() { logUserActivity('[public_address/index] load', '{{username}}'); };
-    window.onunload = function() { logUserActivity('[public_address/index] unload', '{{username}}'); };
-  </script>
 </head>
 <style>
 .fixed-footer {
@@ -35,8 +30,7 @@
       <div class="w3-container w3-cell w3-cell-middle">
         <div class="w3-right w3-dropdown-hover" style="margin-right: 1em;">
           <button class="w3-white w3-border w3-button">时间表&nbsp;▾</button>
-          <div class="w3-dropdown-content w3-bar-block w3-card-4">
-            <a class="w3-bar-item w3-button" onclick="previewSchedule()" >预览</a>            
+          <div class="w3-dropdown-content w3-bar-block w3-card-4">       
             <a onclick="downloadSchedule()" class="w3-bar-item w3-button">下载</a>
             <a class="w3-bar-item w3-button" onclick="uploadSchedule()" >上传并应用</a>
             <form id="form-schedule-upload" method="post" enctype="multipart/form-data">
@@ -108,7 +102,6 @@
 <div class="fixed-footer">
   <div class="w3-cell-row">
     <div class="w3-container w3-cell">
-      <button onclick="stopPlaying();" class="w3-left w3-white w3-border w3-button" style="margin-top:0.33em;">停止播放</button>
       <button onclick="clientHealthCheck();" class="w3-left w3-white w3-border w3-button" style="margin-top:0.33em;">健康检查</button>
     </div>
     <div class="w3-container w3-cell">
@@ -134,7 +127,6 @@ document.getElementById('schedule-input').onchange = function() {
       document.getElementById('msg-box').style.display='block';
       if (XHR.status === 200) {
         document.getElementById('msg-body').innerHTML = '<div>' + XHR.responseText.toString() + '</div>';
-        logUserActivity('[public_address/index] upload new schedule', '{{username}}');
       } else {
         document.getElementById('msg-body').innerHTML = '<b>错误</b>: 时间表上传/应用失败！错误信息：<br><br>'
         document.getElementById('msg-body').innerHTML += XHR.responseText;
@@ -153,18 +145,11 @@ document.getElementById('schedule-input').onchange = function() {
 };
 
 function downloadSchedule() {
-  logUserActivity('[public_address/index] download existing schedule', '{{username}}');
   window.open('{{app_address}}/download_schedule/?dummy=' + Math.floor(Math.random() * 10000).toString());
-}
-
-function previewSchedule() {
-  logUserActivity('[public_address/index] preview existing schedule', '{{username}}');
-  window.open('{{app_address}}/schedule/');
 }
 
 function downloadMusic() {
   musicName = document.getElementById('input-music-name').value + '.mp3';
-  logUserActivity('[public_address/index] download music' + musicName, '{{username}}');
   window.open('{{app_address}}/download_music/?filename=' + musicName);
 }
 
@@ -181,7 +166,6 @@ function manualPlay() {
   }
   devices = devices.slice(0, -1);
   musicName = document.getElementById('input-music-name').value;
-  logUserActivity('[public_address/index] start playing ' + musicName + ' at ' + devices, '{{username}}');
   submission('{{app_address}}/play/?sound_index=' + encodeURIComponent(document.getElementById('input-music-id').value) + '&devices=' + encodeURIComponent(devices), 
              '<span style=\'font-weight: bold;\'>' + musicName + '</span>已加入[' + devices + ']的播放队列');
 }
@@ -195,26 +179,18 @@ function selectSpeaker(musicID, musicName) {
 }
 
 function clientHealthCheck() {
-  logUserActivity('[public_address/history] client health check', '{{username}}');
-
   $.ajax({
     url:"{{app_address}}/client-health-check/",
     type:"GET",
-    success: function(data, status){
+    success: (data, status) => {
       alert(JSON.stringify(data));
     },
-    error: function(jqXHR, textStatus, errorThrown) {
+    error: (jqXHR, textStatus, errorThrown) => {
       // Possible values for the second argument (besides null) are "timeout", "error", "abort", and "parsererror"
       alert("错误：\n" + errorThrown + "\n" + jqXHR.responseText);
     }
   });
 
-}
-
-function stopPlaying() {
-  logUserActivity('[public_address/history] stop playback', '{{username}}');
-  submission('{{app_address}}/stop/', 
-             '播放已停止');
 }
 
 function uploadSchedule() {
@@ -223,13 +199,15 @@ function uploadSchedule() {
 
 function submission(url, msg){
   const xhr = new XMLHttpRequest();
-  xhr.timeout = 5000;
+  xhr.timeout = 10000; // server's timeout to client is 5 sec, so here we set it to 10 sec.
 
-  xhr.onreadystatechange = function(e) {
+  xhr.onreadystatechange = (e) => {
     if (xhr.readyState === 4) {
       if (xhr.status === 200) {
-      } else {
-        msg = '指令发送错误(' + xhr.status.toString() + ')：<br>' + xhr.responseText;
+      } else if (xhr.status === 0) {
+        msg = '指令发送错误无法连接到服务器';
+      }else {
+        msg = '指令发送错误(HTTP状态码' + xhr.status.toString() + ')：<br>' + xhr.responseText;
       }
       document.getElementById('msg-box').style.display='block';
       document.getElementById('msg-body').innerHTML= msg;
@@ -243,7 +221,6 @@ function submission(url, msg){
 }
 
 function logout() {
-  logUserActivity('[public_address/index] logout', '{{username}}');
   window.location.replace('{{app_address}}/logout/');
 }
 </script>
