@@ -166,8 +166,9 @@ function manualPlay() {
   }
   devices = devices.slice(0, -1);
   musicName = document.getElementById('input-music-name').value;
-  submission('{{app_address}}/play/?sound_index=' + encodeURIComponent(document.getElementById('input-music-id').value) + '&devices=' + encodeURIComponent(devices), 
-             '<span style=\'font-weight: bold;\'>' + musicName + '</span>已加入[' + devices + ']的播放队列');
+  submission(
+    `{{app_address}}/play/?sound_index=${encodeURIComponent(document.getElementById('input-music-id').value)}&devices=${encodeURIComponent(devices)}`
+  );
 }
 
 function selectSpeaker(musicID, musicName) {
@@ -204,10 +205,11 @@ function submission(url, msg){
   xhr.onreadystatechange = (e) => {
     if (xhr.readyState === 4) {
       if (xhr.status === 200) {
+        msg = xhr.responseText;
       } else if (xhr.status === 0) {
-        msg = '指令发送错误无法连接到服务器';
+        msg = '指令发送错误: 无法连接到服务器';
       }else {
-        msg = '指令发送错误(HTTP状态码' + xhr.status.toString() + ')：<br>' + xhr.responseText;
+        msg = '指令发送错误:<br>HTTP状态码: ' + xhr.status.toString() + '<br>服务器返回消息: ' + xhr.responseText;
       }
       document.getElementById('msg-box').style.display='block';
       document.getElementById('msg-body').innerHTML= msg;

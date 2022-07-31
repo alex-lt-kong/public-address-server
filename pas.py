@@ -75,7 +75,7 @@ def get_song_by_id(sound_index: int):
         return songs_list[sound_index], songs_list
 
 
-def trigger_handler(triggers, device_names, default_response, results) -> flask.Response:
+def trigger_handler(triggers, device_names, results) -> flask.Response:
 
     format_agent_name = []
     assert len(triggers) == len(device_names)
@@ -92,8 +92,6 @@ def trigger_handler(triggers, device_names, default_response, results) -> flask.
     for i in range(len(triggers)):
         if triggers[i] is not None:
             triggers[i].join()
-
-    http_status = 200
     response = ''
     for i in range(len(triggers)):
         if results[i] is not None:
@@ -103,20 +101,19 @@ def trigger_handler(triggers, device_names, default_response, results) -> flask.
                    f'status_code:{results[i][1]}, '
                    f'response_text: {results[i][0]}')
                 response += (
-                    f'{device_names[i]}设备返回错误，代码：{results[i][1]}'
+                    f'设备[{device_names[i]}]: 失败，HTTP代码：{results[i][1]}'
                     f'，错误描述：{results[i][0]}\n')
-                http_status = 500
             else:
+                response += f'设备[{device_names[i]}]: 成功加入播放列表\n'
                 logging.info(f'response from device {format_agent_name[i]}: '
                              f'status_code=={results[i][1]}, '
                              f'response_text=={results[i][0]}, '
                              f'response_time=={results[i][3]}ms')
     if response == '':
-        response = default_response
+        response = '没有可用的播放设备'
 
-    logging.info(f'[response to client] status_code: {http_status}, '
-                 f'response_text: {response}')
-    return Response(response.replace('\n', '<br>'), http_status)
+    logging.info(f'[response to client] response_text: {response}')
+    return Response(response.replace('\n', '<br>'), 200)
 
 
 def update_playback_history(sound_index: int, sound_name: str, reason: str) -> None:
@@ -352,11 +349,7 @@ def play():
         triggers.append(threading.Thread(target=call_remote_client,
                                          args=(device_url, results, i)))
 
-    return trigger_handler(
-            triggers=triggers,
-            device_names=devices,
-            default_response=f'PLAY command accepted by {devices}',
-            results=results)
+    return trigger_handler(triggers=triggers, device_names=devices, results=results)
 
 
 @app.route('/client-health-check/', methods=['GET'])
@@ -515,11 +508,7 @@ def main_loop() -> None:
                                            args=(device_url, results, i))
                 triggers.append(trigger)
 
-            trigger_handler(
-                triggers=triggers,
-                device_names=devices,
-                default_response=f'PLAY command accepted by {devices}',
-                results=results)
+            trigger_handler(triggers=triggers, device_names=devices, results=results)
 
         if matched is True:
             for i in range(60):
