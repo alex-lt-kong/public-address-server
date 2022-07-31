@@ -497,7 +497,7 @@ def main() -> None:
     else:
         logging.info('Running in production mode')
 
-    sounds_df = pd.read_csv('./sounds.csv')
+    sounds_df = pd.read_csv(os.path.join(app_dir, 'sounds.csv'))
 
     signal.signal(signal.SIGINT, stop_signal_handler)
     signal.signal(signal.SIGTERM, stop_signal_handler)
