@@ -43,12 +43,12 @@
   </header>
   <ul class="w3-ul">
     {% for i in range(0, playback_items|length) %}
-      <li class="w3-container" onClick="selectSpeaker({{playback_items[i][1]}}, '{{playback_items[i][2]}}');"
+      <li class="w3-container" onClick="selectSpeaker('{{playback_items[i][1]}}');"
           style="padding-top:1px; padding-bottom:1px">
         <p style="font-weight:bold; margin-top:7px; margin-bottom:1px;">
           <span>{{playback_items[i][0]}}</span>
-          <span class="w3-right">{{playback_items[i][3]}}</span></p>
-        <p style="margin-top:1px; margin-bottom:7px">{{playback_items[i][2]}}</p>
+          <span class="w3-right">{{playback_items[i][2]}}</span></p>
+        <p style="margin-top:1px; margin-bottom:7px">{{playback_items[i][1]}}</p>
       </li>
     {% endfor %}
   <ul>
@@ -74,7 +74,6 @@
       </header>
       <div class="w3-container">
         <div><form id="form-devices">
-        <input id="input-music-id" value="" hidden>
         <input id="input-music-name" value="" hidden>
         {%for i in range(0, agent_names_list|length)%} 
           <span class="w3-tag w3-white w3-left w3-medium" style="font-family:monospace;">
@@ -86,15 +85,13 @@
           <label for="checkbox-{{agent_names_list[i]}}">{{ "%-4s"| format(agent_names_list[i]) |replace(" ", "&nbsp;")|safe }}</label></span>
         {%endfor%}
         </form></div>
-        <footer class="w3-container"><p>
-          <button id="button-okay-select-devices" onclick="manualPlay();" class="w3-right w3-button w3-teal" disabled>
-            播放
-          </button>
-          <button id="button-okay-select-devices" onclick="downloadMusic();"
-                  class="w3-right w3-button w3-teal" style="margin-right: 1em">
-            下载
-          </button>
-        </p></footer>
+        <footer class="w3-container">
+          <p>
+            <button id="button-okay-select-devices" onclick="manualPlay();" class="w3-right w3-button w3-teal" disabled>
+              播放
+            </button>
+          </p>
+        </footer>
       </div>
     </div>
   </div>
@@ -148,11 +145,6 @@ function downloadSchedule() {
   window.open('{{app_address}}/download_schedule/?dummy=' + Math.floor(Math.random() * 10000).toString());
 }
 
-function downloadMusic() {
-  musicName = document.getElementById('input-music-name').value + '.mp3';
-  window.open('{{app_address}}/download_music/?filename=' + musicName);
-}
-
 function manualPlay() {
   document.getElementById('msg-box-select-devices').style.display='none';
   form = document.getElementById('form-devices')
@@ -167,14 +159,13 @@ function manualPlay() {
   devices = devices.slice(0, -1);
   musicName = document.getElementById('input-music-name').value;
   submission(
-    `{{app_address}}/play/?sound_index=${encodeURIComponent(document.getElementById('input-music-id').value)}&devices=${encodeURIComponent(devices)}`
+    `{{app_address}}/play/?sound_name=${encodeURIComponent(musicName)}&devices=${encodeURIComponent(devices)}`
   );
 }
 
-function selectSpeaker(musicID, musicName) {
+function selectSpeaker(musicName) {
  
   document.getElementById('msg-box-select-devices').style.display = 'block';
-  document.getElementById('input-music-id').value = musicID;
   document.getElementById('input-music-name').value = musicName;
 
 }
