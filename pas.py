@@ -407,7 +407,7 @@ def main_loop() -> None:
     while stop_signal is False:
         if reload_schedule:
             df = pd.read_csv(schedule_path)
-            reload_schedule = True
+            reload_schedule = False
             logging.info('Schedule reloaded in main_loop()')
 
         matched = False
