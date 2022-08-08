@@ -6,7 +6,6 @@ from flask import Flask, render_template, redirect, Response, request, session
 import argparse
 import datetime as dt
 import flask
-import glob
 import hashlib
 import logging
 import json
@@ -265,6 +264,8 @@ def play() -> flask.Response:
             sound_name = request.args.get('sound_name')
         except Exception as e:
             return Response(f'{e}', status=400)
+        if '../' in sound_name or '/..' in sound_name:
+            return Response(f'参数[{sound_name}]存在非法字符', status=400)
     else:
         return Response('sound_name not specified', status=400)
 
