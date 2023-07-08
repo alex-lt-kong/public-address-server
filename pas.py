@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-from emailer import emailer
+from typing import Any
 from flask import Flask, render_template, redirect, Response, request, session
 
 import argparse
@@ -47,9 +47,9 @@ stop_signal = False
 debug_mode = False
 client_urls_list: typing.List[str] = []
 client_names_list: typing.List[str] = []
+client_sync_delay_list: typing.List[int] = []
 
-
-def stop_signal_handler(*args) -> None:
+def stop_signal_handler(*args: Any) -> None:
 
     global stop_signal
     stop_signal = True
@@ -113,17 +113,20 @@ def update_playback_history(sound_name: str, reason: str) -> None:
         logging.error(f'Failed to update playback history: {e}')
 
 
-def call_remote_client(url: str, results: typing.List[typing.List[object]], index: int) -> None:
+def call_remote_client(url: str, results: typing.List[typing.List[object]],
+                       index: int) -> None:
 
     logging.debug(f'url to request: {url}')
 
     try:
         start = dt.datetime.now()
-        r = requests.get(url, auth=(settings['devices']['username'], settings['devices']['password']), timeout=5)
+        r = requests.get(url, auth=(settings['devices']['username'],
+                                    settings['devices']['password']), timeout=5)
         response_timestamp = dt.datetime.now()
         response_time = int((response_timestamp - start).total_seconds() * 1000)
         response_text = r.content.decode("utf-8")
-        results[index] = [response_text, r.status_code, response_timestamp, response_time]
+        results[index] = [response_text, r.status_code,
+                          response_timestamp, response_time]
     except Exception as ex:
         results[index] = [str(ex), -1, dt.datetime.now(), 0]
 
@@ -135,7 +138,10 @@ def validate_uploaded_schedule(path_to_validate: str) -> typing.Tuple[bool, str]
     except Exception as e:
         return False, f'时间表无法解析：{e}'
 
-    if '时' != df.columns[0] or '分' != df.columns[1] or '类型' != df.columns[2] or '备注' != df.columns[3]:
+    if (
+        '时' != df.columns[0] or '分' != df.columns[1] or
+        '类型' != df.columns[2] or '备注' != df.columns[3]
+    ):
         return False, '列名称错误：前四列应依次为[时，分，类型，备注]'
 
     for name in client_names_list:
@@ -290,8 +296,10 @@ def play() -> flask.Response:
     for i in range(len(devices)):
         index = client_names_list.index(devices[i])
         results.append([])
-        device_url = f'{client_urls_list[index]}?sound_name={sound_name}'
-        triggers.append(threading.Thread(target=call_remote_client, args=(device_url, results, i)))
+        device_url = (f'{client_urls_list[index]}?sound_name={sound_name}&'
+                      f'delay_ms={client_sync_delay_list[i]}')
+        triggers.append(threading.Thread(
+            target=call_remote_client, args=(device_url, results, i)))
 
     return trigger_handler(triggers=triggers, device_names=devices, results=results)
 
@@ -371,8 +379,12 @@ def login() -> flask.Response:
     if f'{app_name}' in session and 'username' in session[f'{app_name}']:
         return redirect(f'{app_address}/')
 
+    kwargs = {
+        'app_address': app_address
+    }
     if request.method != 'POST':
-        return render_template('login.html', error_message='')
+
+        return render_template('login.html', error_message='', **kwargs)
 
     try:
         with open(users_path, 'r') as json_file:
@@ -392,7 +404,8 @@ def login() -> flask.Response:
             != json_data['users'][request.form['username']]):
         return render_template(
                 'login.html',
-                error_message='错误：密码错误')
+                error_message='错误：密码错误',
+                **kwargs)
     session[f'{app_name}'] = {}
     session[f'{app_name}']['username'] = request.form['username']
 
@@ -469,7 +482,8 @@ def main() -> None:
     debug_mode = args['debug']
 
     global settings, sounds_df
-    global app_address, client_urls_list, client_names_list, sound_repository_path
+    global app_address, client_urls_list, client_names_list
+    global client_sync_delay_list, sound_repository_path
     with open(os.path.join(app_dir, 'settings.json'), 'r') as json_file:
         json_str = json_file.read()
         settings = json.loads(json_str)
@@ -479,6 +493,9 @@ def main() -> None:
     app_address = settings['app']['address']
     client_urls_list = settings['devices']['urls']
     client_names_list = settings['devices']['names']
+    client_sync_delay_list = settings['devices']['sync_delay_ms']
+    assert len(client_urls_list) == len(client_names_list)
+    assert len(client_names_list) == len(client_sync_delay_list)
     log_path = settings['app']['log_path']
     sound_repository_path = settings['app']['sound_repository_path']
     os.environ['REQUESTS_CA_BUNDLE'] = settings['app']['ca_path']
@@ -506,15 +523,6 @@ def main() -> None:
 
     main_loop_thread = threading.Thread(target=main_loop, args=())
     main_loop_thread.start()
-    th_email = threading.Thread(
-        target=emailer.send_service_start_notification,
-        kwargs={
-            'settings_path': settings_path,
-            'service_name': f'{app_name}',
-            'path_of_logs_to_send': log_path,
-            'delay': 0 if debug_mode else 300
-        })
-    th_email.start()
 
     waitress.serve(app, host="127.0.0.1", port=settings['flask']['port'])
 
