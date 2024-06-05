@@ -12,17 +12,14 @@
     "devices": {
         "urls": [
             "https://device1.lan/notification/",
-            "https://device2.lan/notification/",
-            "https://device3.lan/notification/"
+            "https://device2.lan/notification/"
         ],
         "names": [
             "设备1",
-            "设备2",
-            "设备3"
+            "设备2"
         ],
         "sync_delay_ms": [
             100,
-            50,
             0
         ],
         "username": "admin",
