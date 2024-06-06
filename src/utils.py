@@ -1,20 +1,19 @@
-from flask import Response
+from typing import List
 
 import datetime as dt
-import flask
 import global_vars as gv
 import logging
 import os
 import requests
 import threading
-import typing
+import time
 
 
 def trigger_handler(
-    triggers: typing.List[threading.Thread],
-    device_names: typing.List[str],
-    results: typing.List[typing.List[object]]
-) -> flask.Response:
+    triggers: List[threading.Thread],
+    device_names: List[str],
+    client_resps: List[gv.ClientResponse]
+) -> str:
 
     for i in range(len(triggers)):
         triggers[i].start()
@@ -23,27 +22,21 @@ def trigger_handler(
     for i in range(len(triggers)):
         triggers[i].join()
 
-    response = ''
+    response: str = ''
     for i in range(len(triggers)):
-        if results[i][1] != 200:
-            logging.error(
-                f'[non-200 response from agent [{device_names[i]}], '
-                f'status_code:{results[i][1]}, response_text: {results[i][0]}'
-            )
+        if client_resps[i].status_code < 200 or client_resps[i].status_code >= 300:
+            logging.error(f'response from device [{device_names[i]}], {client_resps[i]}')
             response += (
-                f'设备[{device_names[i]}]: 失败，HTTP代码：{results[i][1]}'
-                f'，错误描述：{results[i][0]}\n')
+                f'设备[{device_names[i]}]: 失败，HTTP代码：{client_resps[i].status_code}'
+                f'，错误描述：{client_resps[i].response_text}\n')
         else:
             response += f'设备[{device_names[i]}]: 成功加入播放列表\n'
-            logging.info(
-                f'response from device {device_names[i]}: status_code=={results[i][1]}, '
-                f'response_text=={results[i][0]}, response_time=={results[i][3]}ms'
-            )
+            logging.info(f'response from device {device_names[i]}: {str(client_resps[i])}')
     if response == '':
         response = '没有可用的播放设备'
 
-    logging.info(f'[response to client] response_text: {response}')
-    return Response(response.replace('\n', '<br>'), 200)
+    logging.info(f'[response to client] response_text:\n{response}')
+    return response
 
 
 def update_playback_history(sound_name: str, reason: str) -> None:
@@ -66,19 +59,20 @@ def update_playback_history(sound_name: str, reason: str) -> None:
         logging.error(f'Failed to update playback history: {e}')
 
 
-def call_remote_client(url: str, results: typing.List[typing.List[object]],
-                       index: int) -> None:
+def call_remote_client(url: str, client_resp: gv.ClientResponse) -> None:
 
     logging.debug(f'url to request: {url}')
 
     try:
-        start = dt.datetime.now()
+        start = time.time()
         r = requests.get(url, auth=(gv.settings['devices']['username'],
-                                    gv.settings['devices']['password']), timeout=5)
-        response_timestamp = dt.datetime.now()
-        response_time = int((response_timestamp - start).total_seconds() * 1000)
-        response_text = r.content.decode("utf-8")
-        results[index] = [response_text, r.status_code,
-                          response_timestamp, response_time]
+                                    gv.settings['devices']['password']),
+                         timeout=5)
+        client_resp.response_text = r.content.decode("utf-8")
+        client_resp.status_code = r.status_code
+        client_resp.response_latency_ms = int((time.time() - start) * 1000)
+
     except Exception as ex:
-        results[index] = [str(ex), -1, dt.datetime.now(), 0]
+        client_resp.response_text = str(ex)
+        client_resp.status_code = 500
+        client_resp.response_latency_ms = -1

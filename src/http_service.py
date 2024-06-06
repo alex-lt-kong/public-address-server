@@ -1,3 +1,4 @@
+from typing import Any, Dict, List, Union, Tuple
 from flask import Flask, render_template, redirect, Response, request, session
 
 import flask
@@ -26,7 +27,7 @@ app.config.update(
 app.config['JSON_AS_ASCII'] = False
 
 
-def validate_uploaded_schedule(path_to_validate: str) -> typing.Tuple[bool, str]:
+def validate_uploaded_schedule(path_to_validate: str) -> Tuple[bool, str]:
 
     try:
         df = pd.read_csv(path_to_validate)
@@ -180,36 +181,39 @@ def play() -> flask.Response:
             continue
         return Response(f'[{device}]不在可用设备列表{gv.client_names_list}中', status=400)
 
-    logging.info(f'[{sound_name}] manually played by {username}')
+    logging.info(f'[{sound_name}] manually played at {devices} by {username}')
 
-    utils.update_playback_history(sound_name, f'{username}播放')
+    reason = f"""{username}于{str(devices).replace(",", "/").replace("'", "")}播放"""
+    utils.update_playback_history(sound_name, reason)
 
-    triggers: typing.List[threading.Thread] = []
-    results: typing.List[typing.List[object]] = []
+    triggers: List[threading.Thread] = []
+    client_resps: List[gv.ClientResponse] = []
 
     for i in range(len(devices)):
         index = gv.client_names_list.index(devices[i])
-        results.append([])
+        client_resps.append(gv.ClientResponse())
         device_url = (f'{gv.client_urls_list[index]}?sound_name={sound_name}&'
                       f'delay_ms={gv.client_sync_delay_list[i]}')
         triggers.append(threading.Thread(
-            target=utils.call_remote_client, args=(device_url, results, i)))
+            target=utils.call_remote_client, args=(device_url, client_resps[-1])))
 
-    return utils.trigger_handler(triggers=triggers, device_names=devices, results=results)
+    return Response(utils.trigger_handler(
+        triggers=triggers, device_names=devices, client_resps=client_resps
+    ).replace('\n', '<br>'), 200)
 
 
 @app.route('/client-health-check/', methods=['GET'])
-def client_health_check() -> typing.Union[typing.Dict[str, str], flask.Response]:
+def client_health_check() -> Union[Dict[str, str], flask.Response]:
 
     if f'{gv.app_name}' in session and 'username' in session[f'{gv.app_name}']:
         # username = session[f'{gv.app_name}']['username']
         pass
     else:
         return Response('未登录', status=400)
-    results: typing.Dict[str, typing.Any] = {}
+    resp: Dict[str, Any] = {}
 
     for i in range(len(gv.client_urls_list)):
-        results[gv.client_names_list[i]] = {}
+        resp[gv.client_names_list[i]] = {}
         try:
             r = requests.get(
                 f'{gv.client_urls_list[i]}health_check/',
@@ -217,17 +221,17 @@ def client_health_check() -> typing.Union[typing.Dict[str, str], flask.Response]
                 timeout=5
             )
             if r.status_code == 200:
-                results[gv.client_names_list[i]]['status'] = '正常'
+                resp[gv.client_names_list[i]]['status'] = '正常'
             else:
-                results[gv.client_names_list[i]]['status'] = '错误'
-                results[gv.client_names_list[i]]['content'] = r.content.decode("utf-8")
-                results[gv.client_names_list[i]]['status_code'] = r.status_code
+                resp[gv.client_names_list[i]]['status'] = '错误'
+                resp[gv.client_names_list[i]]['content'] = r.content.decode("utf-8")
+                resp[gv.client_names_list[i]]['status_code'] = r.status_code
         except Exception as e:
-            results[gv.client_names_list[i]]['status'] = '错误'
-            results[gv.client_names_list[i]]['content'] = str(e)
-            results[gv.client_names_list[i]]['status_code'] = -1
+            resp[gv.client_names_list[i]]['status'] = '错误'
+            resp[gv.client_names_list[i]]['content'] = str(e)
+            resp[gv.client_names_list[i]]['status_code'] = -1
 
-    return results
+    return resp
 
 
 @app.route('/', methods=['GET'])
@@ -238,7 +242,7 @@ def index() -> flask.Response:
     else:
         return redirect(f'{gv.app_address}/login/')
 
-    playback_items: typing.List[str] = []
+    playback_items: List[str] = []
     with open(gv.playback_history_file_path, 'r') as f:
         for line in (f.readlines()):
             playback_items.insert(0, line.replace('\n', '').split(','))

@@ -30,12 +30,13 @@ def main_loop() -> None:
         matched = False
         logging.debug('Loop started')
         for index, row in df.iterrows():
-            if (row['时'] == dt.datetime.now().hour and row['分'] == dt.datetime.now().minute) is False:
+            if (row['时'] != dt.datetime.now().hour or
+                    row['分'] != dt.datetime.now().minute):
                 logging.debug('Time does not match, waiting for next loop.')
                 continue
 
             matched = True
-            logging.info(f'\n{row}\nmatched, schedule trigger started')
+            logging.info(f'Record {row.to_json(force_ascii=False)} matches, schedule triggered')
 
             if row['类型'] == '放歌':
                 sound_name = sounds_df.sample(n=1).iloc[0]['sounds']
@@ -44,13 +45,13 @@ def main_loop() -> None:
                 utils.update_playback_history(sound_name, row['备注'])
 
             triggers: typing.List[threading.Thread] = []
-            results: typing.List[typing.List[object]] = []
+            client_resps: typing.List[gv.ClientResponse] = []
             devices: typing.List[str] = []
-            idx = 0
             for i in range(len(gv.client_names_list)):
                 if str(row[gv.client_names_list[i]]) != '1':
                     continue
                 devices.append(gv.client_names_list[i])
+                client_resps.append(gv.ClientResponse())
                 if row['类型'] == '报时':
                     device_url = (f'{gv.client_urls_list[i]}?sound_name=0-cuckoo-clock-sound.mp3')
                 elif row['类型'] == '放歌':
@@ -59,12 +60,10 @@ def main_loop() -> None:
                     logging.error(f'Encountered unexpected type {row["类型"]}')
                     continue
                 triggers.append(threading.Thread(
-                    target=utils.call_remote_client, args=(device_url, results, idx)
+                    target=utils.call_remote_client, args=(device_url, client_resps[-1])
                 ))
-                results.append([None, None, None, None])
-                idx += 1
 
-            utils.trigger_handler(triggers=triggers, device_names=devices, results=results)
+            utils.trigger_handler(triggers, devices, client_resps)
 
         if matched is True:
             for i in range(60):
