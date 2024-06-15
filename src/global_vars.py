@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from typing import Dict, List
+from typing import Any, Dict
 import os
 import typing
 
@@ -18,9 +18,7 @@ stop_signal = False
 debug_mode = False
 reload_schedule = True
 
-client_urls_list: List[str] = []
-client_names_list: List[str] = []
-client_sync_delay_list: List[int] = []
+devices: Dict[str, Any]
 
 
 @dataclass(init=False)

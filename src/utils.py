@@ -9,34 +9,31 @@ import threading
 import time
 
 
-def trigger_handler(
-    triggers: List[threading.Thread],
-    device_names: List[str],
-    client_resps: List[gv.ClientResponse]
-) -> str:
+def trigger_handler(device_names: List[str], sound_name: str) -> List[gv.ClientResponse]:
 
-    for i in range(len(triggers)):
+    triggers = [None] * len(device_names)
+    client_resps = [None] * len(device_names)
+    for i in range(len(device_names)):
+        url = (f'{gv.devices[device_names[i]]["urls"]}?sound_name={sound_name}&'
+               f'delay_ms={gv.devices[device_names[i]]["sync_delay_ms"]}')
+        client_resps[i] = gv.ClientResponse()
+        triggers[i] = threading.Thread(
+            target=call_remote_client,
+            args=(device_names[i], url, client_resps[i])
+        )
         triggers[i].start()
-        logging.info(f'[trigger {device_names[i]}] started')
+        logging.info(f'trigger thread for {device_names[i]} started')
 
-    for i in range(len(triggers)):
-        triggers[i].join()
+    for t in triggers:
+        t.join()
 
-    response: str = ''
-    for i in range(len(triggers)):
-        if client_resps[i].status_code < 200 or client_resps[i].status_code >= 300:
-            logging.error(f'response from device [{device_names[i]}], {client_resps[i]}')
-            response += (
-                f'设备[{device_names[i]}]: 失败，HTTP代码：{client_resps[i].status_code}'
-                f'，错误描述：{client_resps[i].response_text}\n')
+    for i in range(len(client_resps)):
+        if client_resps[i].status_code >= 200 and client_resps[i].status_code < 300:
+            logging.info(f'Response from device {device_names[i]}: {client_resps[i]}')
         else:
-            response += f'设备[{device_names[i]}]: 成功加入播放列表\n'
-            logging.info(f'response from device {device_names[i]}: {str(client_resps[i])}')
-    if response == '':
-        response = '没有可用的播放设备'
+            logging.error(f'Response from device {device_names[i]}: {client_resps[i]}')
 
-    logging.info(f'[response to client] response_text:\n{response}')
-    return response
+    return client_resps
 
 
 def update_playback_history(sound_name: str, reason: str) -> None:
@@ -59,20 +56,18 @@ def update_playback_history(sound_name: str, reason: str) -> None:
         logging.error(f'Failed to update playback history: {e}')
 
 
-def call_remote_client(url: str, client_resp: gv.ClientResponse) -> None:
+def call_remote_client(device_name: str, url: str, client_resp: gv.ClientResponse) -> None:
 
     logging.debug(f'url to request: {url}')
 
     try:
         start = time.time()
-        r = requests.get(url, auth=(gv.settings['devices']['username'],
-                                    gv.settings['devices']['password']),
+        r = requests.get(url, auth=(gv.devices[device_name]['username'],
+                                    gv.devices[device_name]['password']),
                          timeout=5)
         client_resp.response_text = r.content.decode("utf-8")
         client_resp.status_code = r.status_code
-        client_resp.response_latency_ms = int((time.time() - start) * 1000)
-
     except Exception as ex:
         client_resp.response_text = str(ex)
         client_resp.status_code = 500
-        client_resp.response_latency_ms = -1
+    client_resp.response_latency_ms = int((time.time() - start) * 1000)

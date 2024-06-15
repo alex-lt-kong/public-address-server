@@ -11,8 +11,6 @@ import os
 import pandas as pd
 import requests
 import shutil
-import typing
-import threading
 import utils
 import waitress
 
@@ -40,7 +38,7 @@ def validate_uploaded_schedule(path_to_validate: str) -> Tuple[bool, str]:
     ):
         return False, '列名称错误：前四列应依次为[时，分，类型，备注]'
 
-    for name in gv.client_names_list:
+    for name in gv.devices.keys():
         if name not in df.columns:
             return False, f'时间表没有定义设备[{name}]的计划'
         invalid_rows = df.loc[~df[name].isin([0, 1])]
@@ -51,7 +49,7 @@ def validate_uploaded_schedule(path_to_validate: str) -> Tuple[bool, str]:
             f'设备[{name}]的计划的值只能是[0,1]，这些行违反了这个规则：\n\n{invalid_rows.to_string(header=False, index=False)}'
         )
 
-    if len(df.columns) != len(gv.client_names_list) + 4:
+    if len(df.columns) != len(gv.devices.items()) + 4:
         return False, '时间表存在额外的列'
 
     invalid_rows = df.loc[~((df['分'] >= 0) & (df['分'] <= 59))]
@@ -133,23 +131,10 @@ def download_schedule() -> flask.Response:
 
     logging.info('Downloading schedule')
     return flask.send_file(
-        filename_or_fp=gv.schedule_path,
+        path_or_file=gv.schedule_path,
         as_attachment=True,
-        attachment_filename=f'schedule-{dt.datetime.now().hour:02}{dt.datetime.now().minute:02}.csv'
+        download_name=f'schedule-{dt.datetime.now().hour:02}{dt.datetime.now().minute:02}.csv'
     )
-
-
-def sanitize_filename(filename: str) -> str:
-    # This function may be not robust... but should be good enough
-    # for this use case...
-    # also, the security is enhanced by the use of send_from_directory()
-    error_set = ['/', '\\', ':', '*', '?', '"', '|', '<', '>', ' ']
-    for c in filename:
-        if c in error_set:
-            filename = filename.replace(c, '_')
-    if len(filename) > 64:
-        filename = filename[:31] + '__' + filename[-31:]
-    return filename
 
 
 @app.route('/play/', methods=['GET'])
@@ -177,29 +162,29 @@ def play() -> flask.Response:
         return Response('没有选中的播放设备', status=400)
 
     for device in devices:
-        if device in gv.client_names_list:
+        if device in gv.devices.keys():
             continue
-        return Response(f'[{device}]不在可用设备列表{gv.client_names_list}中', status=400)
+        return Response(f'[{device}]不在可用设备列表{gv.devices.keys()}中', status=400)
 
     logging.info(f'[{sound_name}] manually played at {devices} by {username}')
 
     reason = f"""{username}于{str(devices).replace(",", "/").replace("'", "")}播放"""
     utils.update_playback_history(sound_name, reason)
 
-    triggers: List[threading.Thread] = []
-    client_resps: List[gv.ClientResponse] = []
+    client_resps = utils.trigger_handler(device_names=devices, sound_name=sound_name)
+    assert len(client_resps) == len(devices)
+    response = ''
+    for i in range(len(client_resps)):
+        if client_resps[i].status_code < 200 or client_resps[i].status_code >= 300:
+            response += (
+                f'设备[{devices[i]}]: 失败，HTTP代码：{client_resps[i].status_code}'
+                f'，错误描述：{client_resps[i].response_text}\n')
+        else:
+            response += f'设备[{devices[i]}]: 成功加入播放列表\n'
+    if response == '':
+        response = '没有可用的播放设备'
 
-    for i in range(len(devices)):
-        index = gv.client_names_list.index(devices[i])
-        client_resps.append(gv.ClientResponse())
-        device_url = (f'{gv.client_urls_list[index]}?sound_name={sound_name}&'
-                      f'delay_ms={gv.client_sync_delay_list[i]}')
-        triggers.append(threading.Thread(
-            target=utils.call_remote_client, args=(device_url, client_resps[-1])))
-
-    return Response(utils.trigger_handler(
-        triggers=triggers, device_names=devices, client_resps=client_resps
-    ).replace('\n', '<br>'), 200)
+    return Response(response.replace('\n', '<br>'), 200)
 
 
 @app.route('/client-health-check/', methods=['GET'])
@@ -211,25 +196,24 @@ def client_health_check() -> Union[Dict[str, str], flask.Response]:
     else:
         return Response('未登录', status=400)
     resp: Dict[str, Any] = {}
-
-    for i in range(len(gv.client_urls_list)):
-        resp[gv.client_names_list[i]] = {}
+    for k, v in gv.devices.items():
+        resp[k] = {}
         try:
             r = requests.get(
-                f'{gv.client_urls_list[i]}health_check/',
-                auth=(gv.settings['devices']['username'], gv.settings['devices']['password']),
+                f'{gv.devices[k]["urls"]}health_check/',
+                auth=(gv.devices[k]['username'], gv.devices[k]['password']),
                 timeout=5
             )
             if r.status_code == 200:
-                resp[gv.client_names_list[i]]['status'] = '正常'
+                resp[k]['status'] = '正常'
             else:
-                resp[gv.client_names_list[i]]['status'] = '错误'
-                resp[gv.client_names_list[i]]['content'] = r.content.decode("utf-8")
-                resp[gv.client_names_list[i]]['status_code'] = r.status_code
+                resp[k]['status'] = '错误'
+                resp[k]['content'] = r.content.decode("utf-8")
+                resp[k]['status_code'] = r.status_code
         except Exception as e:
-            resp[gv.client_names_list[i]]['status'] = '错误'
-            resp[gv.client_names_list[i]]['content'] = str(e)
-            resp[gv.client_names_list[i]]['status_code'] = -1
+            resp[k]['status'] = '错误'
+            resp[k]['content'] = str(e)
+            resp[k]['status_code'] = -1
 
     return resp
 
@@ -250,7 +234,7 @@ def index() -> flask.Response:
         'app_address': gv.app_address,
         'playback_items': playback_items,
         'mode': 'dev' if gv.debug_mode else 'prod',
-        'agent_names_list': gv.client_names_list,
+        'agent_names_list': list(gv.devices.keys()),
         'username': username
     }
 

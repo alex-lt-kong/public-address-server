@@ -36,34 +36,27 @@ def main_loop() -> None:
                 continue
 
             matched = True
-            logging.info(f'Record {row.to_json(force_ascii=False)} matches, schedule triggered')
+            logging.info(
+                f'Record {row.to_json(force_ascii=False)} matches, schedule triggered'
+            )
 
+            sound_name = None
             if row['类型'] == '放歌':
                 sound_name = sounds_df.sample(n=1).iloc[0]['sounds']
                 logging.info(f'[{sound_name}] is selected')
-
                 utils.update_playback_history(sound_name, row['备注'])
+            elif row['类型'] == '报时':
+                sound_name = '0-cuckoo-clock-sound.mp3'
+            else:
+                logging.error(f'Encountered unexpected type {row["类型"]}')
+                continue
 
-            triggers: typing.List[threading.Thread] = []
-            client_resps: typing.List[gv.ClientResponse] = []
             devices: typing.List[str] = []
-            for i in range(len(gv.client_names_list)):
-                if str(row[gv.client_names_list[i]]) != '1':
+            for d in gv.devices:
+                if str(row[d]) != '1':
                     continue
-                devices.append(gv.client_names_list[i])
-                client_resps.append(gv.ClientResponse())
-                if row['类型'] == '报时':
-                    device_url = (f'{gv.client_urls_list[i]}?sound_name=0-cuckoo-clock-sound.mp3')
-                elif row['类型'] == '放歌':
-                    device_url = f'{gv.client_urls_list[i]}?sound_name={sound_name}'
-                else:
-                    logging.error(f'Encountered unexpected type {row["类型"]}')
-                    continue
-                triggers.append(threading.Thread(
-                    target=utils.call_remote_client, args=(device_url, client_resps[-1])
-                ))
-
-            utils.trigger_handler(triggers, devices, client_resps)
+                devices.append(d)
+            utils.trigger_handler(devices, sound_name)
 
         if matched is True:
             for i in range(60):
@@ -91,11 +84,7 @@ def main() -> None:
         gv.settings = json.loads(json_str)
 
     gv.app_address = gv.settings['app']['address']
-    gv.client_urls_list = gv.settings['devices']['urls']
-    gv.client_names_list = gv.settings['devices']['names']
-    gv.client_sync_delay_list = gv.settings['devices']['sync_delay_ms']
-    assert len(gv.client_urls_list) == len(gv.client_names_list)
-    assert len(gv.client_names_list) == len(gv.client_sync_delay_list)
+    gv.devices = gv.settings['devices']
     log_path = gv.settings['app']['log_path']
     gv.sound_repository_path = gv.settings['app']['sound_repository_path']
     os.environ['REQUESTS_CA_BUNDLE'] = gv.settings['app']['ca_path']
