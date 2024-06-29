@@ -9,20 +9,47 @@ import threading
 import time
 
 
-def trigger_handler(device_names: List[str], sound_name: str) -> List[gv.ClientResponse]:
+def trigger_handler(
+    device_names: List[str], sound_name: str
+) -> List[gv.ClientResponse]:
 
-    triggers = [None] * len(device_names)
+    th_triggers: List[threading.Thread] = [None] * len(device_names)
     client_resps = [None] * len(device_names)
     for i in range(len(device_names)):
         url = (f'{gv.devices[device_names[i]]["urls"]}?sound_name={sound_name}&'
                f'delay_ms={gv.devices[device_names[i]]["sync_delay_ms"]}')
+        client_resps[i] = gv.ClientResponse()
+        th_triggers[i] = threading.Thread(
+            target=call_remote_client,
+            args=(device_names[i], url, client_resps[i])
+        )
+        th_triggers[i].start()
+        logging.info(f'trigger thread for {device_names[i]} started')
+
+    for t in th_triggers:
+        t.join()
+
+    for i in range(len(client_resps)):
+        if client_resps[i].status_code >= 200 and client_resps[i].status_code < 300:
+            logging.info(f'Response from device {device_names[i]}: {client_resps[i]}')
+        else:
+            logging.error(f'Response from device {device_names[i]}: {client_resps[i]}')
+
+    return client_resps
+
+
+def health_check_handler(device_names: List[str]) -> List[gv.ClientResponse]:
+    triggers: List[threading.Thread] = [None] * len(device_names)
+    client_resps: List[gv.ClientResponse] = [None] * len(device_names)
+    for i in range(len(device_names)):
+        url = (f'{gv.devices[device_names[i]]["urls"]}health_check/')
         client_resps[i] = gv.ClientResponse()
         triggers[i] = threading.Thread(
             target=call_remote_client,
             args=(device_names[i], url, client_resps[i])
         )
         triggers[i].start()
-        logging.info(f'trigger thread for {device_names[i]} started')
+        logging.info(f'health check thread for {device_names[i]} started')
 
     for t in triggers:
         t.join()

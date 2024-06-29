@@ -196,24 +196,18 @@ def client_health_check() -> Union[Dict[str, str], flask.Response]:
     else:
         return Response('未登录', status=400)
     resp: Dict[str, Any] = {}
-    for k, v in gv.devices.items():
+    client_resps = utils.health_check_handler(list(gv.devices.keys()))
+    for i in range(len(gv.devices.items())):
+        k = list(gv.devices.keys())[i]
         resp[k] = {}
-        try:
-            r = requests.get(
-                f'{gv.devices[k]["urls"]}health_check/',
-                auth=(gv.devices[k]['username'], gv.devices[k]['password']),
-                timeout=5
-            )
-            if r.status_code == 200:
-                resp[k]['status'] = '正常'
-            else:
-                resp[k]['status'] = '错误'
-                resp[k]['content'] = r.content.decode("utf-8")
-                resp[k]['status_code'] = r.status_code
-        except Exception as e:
+        if (client_resps[i].status_code >= 200 and
+                client_resps[i].status_code < 300):
+            resp[k]['status'] = '正常'
+            resp[k]['latency_ms'] = client_resps[i].response_latency_ms
+        else:
             resp[k]['status'] = '错误'
-            resp[k]['content'] = str(e)
-            resp[k]['status_code'] = -1
+            resp[k]['err_msg'] = client_resps[i].response_text
+        resp[k]['status_code'] = client_resps[i].status_code
 
     return resp
 
