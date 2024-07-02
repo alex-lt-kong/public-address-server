@@ -12,13 +12,11 @@
     "devices": {
         "设备1": {
             "urls": "https://设备一.lan/notification/",
-            "sync_delay_ms": 0,
             "username": "admin",
             "password": "myPassword"
         },
         "device2": {
             "urls": "https://device2.lan/notification/",
-            "sync_delay_ms": 1,
             "username": "admin",
             "password": "myPassword"
         }
