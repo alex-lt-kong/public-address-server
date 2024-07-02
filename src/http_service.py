@@ -9,7 +9,6 @@ import hashlib
 import logging
 import os
 import pandas as pd
-import requests
 import shutil
 import utils
 import waitress

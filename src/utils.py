@@ -13,18 +13,28 @@ def trigger_handler(
     device_names: List[str], sound_name: str
 ) -> List[gv.ClientResponse]:
 
+    # Call the health check endpoint to test latency before making the real API call
+    hc_resps = health_check_handler(device_names)
+    max_latency = 0
+    for i in range(len(hc_resps)):
+        logging.info(
+            f'Latency of {device_names[i]}: {hc_resps[i].response_latency_ms}ms'
+        )
+        if max_latency < hc_resps[i].response_latency_ms:
+            max_latency = hc_resps[i].response_latency_ms
+
     th_triggers: List[threading.Thread] = [None] * len(device_names)
     client_resps = [None] * len(device_names)
     for i in range(len(device_names)):
         url = (f'{gv.devices[device_names[i]]["urls"]}?sound_name={sound_name}&'
-               f'delay_ms={gv.devices[device_names[i]]["sync_delay_ms"]}')
+               f'delay_ms={max_latency - hc_resps[i].response_latency_ms}')
         client_resps[i] = gv.ClientResponse()
         th_triggers[i] = threading.Thread(
             target=call_remote_client,
             args=(device_names[i], url, client_resps[i])
         )
         th_triggers[i].start()
-        logging.info(f'trigger thread for {device_names[i]} started')
+        logging.info(f'trigger thread for {device_names[i]} started, URL: {url}')
 
     for t in th_triggers:
         t.join()
